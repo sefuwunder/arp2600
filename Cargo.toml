@@ -1,0 +1,12 @@
+[package]
+name = "arp2600"
+version = "0.1.0"
+edition = "2021"
+description = "ARP 2600-inspired semi-modular synthesizer in Rust + SDL2: three VCOs, 4-pole ladder filter, ADSR + AR, ring modulator, noise, sample & hold, lag, spring-style reverb, and a patch bay with normalized routing"
+
+[dependencies]
+sdl2 = "0.37"
+midir = "0.10"
+
+[profile.release]
+opt-level = 3
