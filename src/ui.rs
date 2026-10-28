@@ -750,6 +750,38 @@ fn fill_rect<T: sdl2::render::RenderTarget>(
     let _ = canvas.fill_rect(Rect::new(x, y, w, h));
 }
 
+/// Lowest a cord may droop: the bare strip between the module boxes
+/// (bottom 380) and the keyboard (top 400).
+const CORD_FLOOR: f32 = 388.0;
+
+/// Points along a hanging cord: a quadratic Bezier from the out jack
+/// to the in jack, its control point pushed down by a gravity sag
+/// that grows with cord length and caps out, so long cords drape
+/// visibly while none droop into the keyboard. Pure (testable) —
+/// drawing just plots these points as 2px blocks.
+fn cable_curve(x0: i32, y0: i32, x1: i32, y1: i32) -> Vec<(i32, i32)> {
+    let (x0, y0, x1, y1) = (x0 as f32, y0 as f32, x1 as f32, y1 as f32);
+    let dist = ((x1 - x0).powi(2) + (y1 - y0).powi(2)).sqrt();
+    let sag = (dist * 0.22).clamp(24.0, 110.0);
+    let mid_x = (x0 + x1) / 2.0;
+    let mid_y = (y0 + y1) / 2.0;
+    // The Bezier's midpoint is y = 0.25*y0 + 0.5*cy + 0.25*y1; clamp
+    // the control point so the cord's belly never passes the floor.
+    // (The sag cap does most of this work; the clamp is belt and
+    // braces for cords whose endpoints sit on different rows.)
+    let cy = (mid_y + sag).min(2.0 * CORD_FLOOR - 0.5 * (y0 + y1));
+    let steps = (dist / 2.0).ceil() as usize + 1;
+    (0..=steps)
+        .map(|i| {
+            let t = i as f32 / steps as f32;
+            let u = 1.0 - t;
+            let x = u * u * x0 + 2.0 * u * t * mid_x + t * t * x1;
+            let y = u * u * y0 + 2.0 * u * t * cy + t * t * y1;
+            (x.round() as i32, y.round() as i32)
+        })
+        .collect()
+}
+
 fn draw_cable<T: sdl2::render::RenderTarget>(
     canvas: &mut Canvas<T>,
     x0: i32,
@@ -760,28 +792,10 @@ fn draw_cable<T: sdl2::render::RenderTarget>(
 ) {
     // draw_line is a no-op on this SDL build's surface canvas
     // (verified: even a full diagonal test line produced zero pixels),
-    // so rasterize cords as 2px blocks with Bresenham.
-    let dx = (x1 - x0).abs();
-    let dy = -(y1 - y0).abs();
-    let sx = if x0 < x1 { 1 } else { -1 };
-    let sy = if y0 < y1 { 1 } else { -1 };
-    let mut err = dx + dy;
-    let (mut x, mut y) = (x0, y0);
+    // so rasterize cords as 2px blocks along their hanging curve.
     canvas.set_draw_color(c);
-    loop {
+    for (x, y) in cable_curve(x0, y0, x1, y1) {
         let _ = canvas.fill_rect(Rect::new(x - 1, y - 1, 2, 2));
-        if x == x1 && y == y1 {
-            break;
-        }
-        let e2 = 2 * err;
-        if e2 >= dy {
-            err += dy;
-            x += sx;
-        }
-        if e2 <= dx {
-            err += dx;
-            y += sy;
-        }
     }
 }
 
@@ -1035,6 +1049,35 @@ mod tests {
         assert_eq!(key_at(KEY_X0 + 90, 430), Some(49)); // C#3 black
         assert_eq!(key_at(KEY_X0, 380), None); // above keyboard
         assert_eq!(key_at(2000, 460), None); // off the right edge
+    }
+
+    #[test]
+    fn cords_hang_below_their_endpoints() {
+        // Long horizontal cord sags visibly.
+        let pts = cable_curve(100, 280, 900, 280);
+        assert_eq!(pts.first(), Some(&(100, 280)));
+        assert_eq!(pts.last(), Some(&(900, 280)));
+        let mid = pts[pts.len() / 2].1;
+        assert!(mid > 280 + 40, "mid y={mid}");
+        // Short cord still droops a little.
+        let pts = cable_curve(100, 280, 200, 280);
+        let mid = pts[pts.len() / 2].1;
+        assert!(mid > 280 + 10, "mid y={mid}");
+        // Nothing droops into the keyboard, even for extreme spans
+        // and endpoints on different rows.
+        for (x0, y0, x1, y1) in [
+            (0, 256, 1380, 256),
+            (0, 256, 1380, 344),
+            (0, 344, 1380, 256),
+            (100, 344, 200, 256),
+        ] {
+            let max_y = cable_curve(x0, y0, x1, y1)
+                .iter()
+                .map(|(_, y)| *y)
+                .max()
+                .unwrap();
+            assert!(max_y <= 388, "max y={max_y} for ({x0},{y0})->({x1},{y1})");
+        }
     }
 
     #[test]

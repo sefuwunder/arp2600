@@ -48,7 +48,10 @@ outs in the left column, ins in the right, with short labels (the
 section already says which module they belong to). Click an OUT jack,
 then an IN jack to patch; click a patched IN jack to unplug. Patching
 an input breaks its normalized connection. One cable per input. Cords
-are colored by their source module, the section being patched from
+are colored by their source module and hang with a gravity sag that
+grows with cord length, so long cords drape below the jack rows
+instead of cutting straight across them — on a heavily wired panel
+each cord's arc stays traceable. The section being patched from
 highlights, and the footer names the jack under the mouse in full.
 Every patch read uses the previous sample's jack value, so feedback
 patches (VCF out -> VCF CV, and so on) are stable
