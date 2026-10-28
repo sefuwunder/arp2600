@@ -11,26 +11,40 @@ use sdl2::rect::Rect;
 use sdl2::render::Canvas;
 use std::collections::HashSet;
 
-pub const W: u32 = 1280;
-pub const H: u32 = 760;
+pub const W: u32 = 1390;
+pub const H: u32 = 640;
 
-pub const PANEL: Color = Color::RGB(0x2E, 0x3D, 0x4F);
-pub const SECTION: Color = Color::RGB(0x24, 0x30, 0x3D);
-pub const INK: Color = Color::RGB(0xE8, 0xE4, 0xD8);
-pub const DIM: Color = Color::RGB(0x9A, 0xA8, 0xB5);
+// Hardware-style palette: the 2600's blue-gray faceplate, white
+// silkscreen, silver-ring jacks.
+pub const PANEL: Color = Color::RGB(0x4E, 0x5F, 0x70);
+pub const SECTION: Color = Color::RGB(0x44, 0x54, 0x64);
+pub const RULE: Color = Color::RGB(0x6B, 0x7D, 0x8E);
+pub const INK: Color = Color::RGB(0xFF, 0xFF, 0xFF);
+pub const DIM: Color = Color::RGB(0xC9, 0xD2, 0xDA);
 pub const ACCENT: Color = Color::RGB(0xFF, 0x8C, 0x42);
-pub const TRACK: Color = Color::RGB(0x14, 0x1C, 0x26);
+pub const TRACK: Color = Color::RGB(0x2E, 0x3B, 0x48);
+pub const CAP: Color = Color::RGB(0xF2, 0xEF, 0xE6);
+pub const JACK_RING: Color = Color::RGB(0xC8, 0xCD, 0xD2);
+pub const JACK_HOLE: Color = Color::RGB(0x14, 0x18, 0x1D);
 pub const WHITE_KEY: Color = Color::RGB(0xE8, 0xE4, 0xD8);
 pub const BLACK_KEY: Color = Color::RGB(0x1A, 0x1E, 0x24);
 pub const HELD_KEY: Color = Color::RGB(0xFF, 0x8C, 0x42);
 
-const CABLE_COLORS: [Color; 6] = [
-    Color::RGB(0xE5, 0x48, 0x4D),
-    Color::RGB(0xFF, 0xB2, 0x24),
-    Color::RGB(0x46, 0xA7, 0x58),
-    Color::RGB(0x00, 0xA2, 0xC7),
-    Color::RGB(0x8E, 0x4E, 0xC6),
-    Color::RGB(0xFF, 0x8C, 0x42),
+// One cable color per module section, so a cord's origin module reads
+// at a glance. Indexed by section (see SECTIONS).
+const SECTION_CABLE: [Color; 12] = [
+    Color::RGB(0xE5, 0x48, 0x4D), // VCO1 red
+    Color::RGB(0xFF, 0xB2, 0x24), // VCO2 amber
+    Color::RGB(0x46, 0xA7, 0x58), // VCO3 green
+    Color::RGB(0x00, 0xC2, 0xE8), // VCF cyan
+    Color::RGB(0xB8, 0x8C, 0xE8), // VCA violet
+    Color::RGB(0xFF, 0x8C, 0x42), // ADSR orange
+    Color::RGB(0xEC, 0x5E, 0xA1), // AR pink
+    Color::RGB(0xD8, 0xD8, 0xD8), // MODULATION light gray
+    Color::RGB(0x2F, 0xBF, 0x9B), // MIXER teal
+    Color::RGB(0xFF, 0xFF, 0xFF), // OUTPUT white
+    Color::RGB(0xB8, 0xE6, 0x2E), // KEYBOARD lime
+    Color::RGB(0x6E, 0x9F, 0xE8), // PREAMP steel blue
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -73,6 +87,7 @@ pub enum Param {
     Mix3,
     RevMix,
     Glide,
+    PreGain,
 }
 
 fn log_map(s: f32, lo: f32, hi: f32) -> f32 {
@@ -131,6 +146,7 @@ impl Param {
             Param::Mix3 => "M4",
             Param::RevMix => "REV",
             Param::Glide => "GLD",
+            Param::PreGain => "GAN",
         }
     }
 
@@ -174,6 +190,7 @@ impl Param {
             Param::Mix3 => "Mixer 4",
             Param::RevMix => "Reverb mix",
             Param::Glide => "Glide",
+            Param::PreGain => "Preamp gain",
         }
     }
 
@@ -216,6 +233,7 @@ impl Param {
             Param::Mix2 => p.mix_levels[2].clamp(0.0, 1.0),
             Param::Mix3 => p.mix_levels[3].clamp(0.0, 1.0),
             Param::RevMix => p.rev_mix.clamp(0.0, 1.0),
+            Param::PreGain => (p.pre_gain / 2.0).clamp(0.0, 1.0),
             Param::Glide => {
                 if p.glide <= 0.0 {
                     0.0
@@ -266,6 +284,7 @@ impl Param {
             Param::Mix2 => p.mix_levels[2] = s,
             Param::Mix3 => p.mix_levels[3] = s,
             Param::RevMix => p.rev_mix = s,
+            Param::PreGain => p.pre_gain = s * 2.0,
             Param::Glide => {
                 p.glide = if s <= 0.0 {
                     0.0
@@ -315,6 +334,7 @@ impl Param {
             Param::Mix2 => format!("{:.0}%", p.mix_levels[2] * 100.0),
             Param::Mix3 => format!("{:.0}%", p.mix_levels[3] * 100.0),
             Param::RevMix => format!("{:.0}%", p.rev_mix * 100.0),
+            Param::PreGain => format!("{:.0}%", p.pre_gain * 100.0),
             Param::Glide => {
                 if p.glide <= 0.0 {
                     "off".to_string()
@@ -340,12 +360,19 @@ pub enum Button {
     NoiseType(NoiseType),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum JackRef {
+    Out(usize),
+    In(usize),
+}
+
 pub struct UiState {
     pub pending_out: Option<usize>,
     pub held_keys: HashSet<u8>,
     pub mouse_note: Option<u8>,
     pub drag_slider: Option<usize>,
     pub hover_param: Option<Param>,
+    pub hover_jack: Option<JackRef>,
     pub status: String,
     pub preset_slot: usize,
     pub octave_shift: i32,
@@ -359,6 +386,7 @@ impl UiState {
             mouse_note: None,
             drag_slider: None,
             hover_param: None,
+            hover_jack: None,
             status: String::new(),
             preset_slot: 1,
             octave_shift: 0,
@@ -366,18 +394,23 @@ impl UiState {
     }
 }
 
-// Section geometry: (x, width, title, switch row, sliders).
+// Section geometry: (x, width, title, sliders, out jacks, in jacks).
+// Jack labels are short on purpose: the section already says which
+// module they belong to, exactly like the hardware. Full names appear
+// in the footer on hover.
 struct Section {
     x: i32,
     w: i32,
     title: &'static str,
     sliders: &'static [Param],
+    outs: &'static [(usize, &'static str)],
+    ins: &'static [(usize, &'static str)],
 }
 
 const SECTIONS: &[Section] = &[
     Section {
         x: 8,
-        w: 120,
+        w: 100,
         title: "VCO 1",
         sliders: &[
             Param::Vco1Coarse,
@@ -385,10 +418,16 @@ const SECTIONS: &[Section] = &[
             Param::Vco1Fm,
             Param::Vco1Level,
         ],
+        outs: &[(out::VCO1_SAW, "SAW"), (out::VCO1_SQR, "SQR")],
+        ins: &[
+            (inp::VCO1_FM1, "FM1"),
+            (inp::VCO1_FM2, "FM2"),
+            (inp::VCO1_CV, "CV"),
+        ],
     },
     Section {
-        x: 136,
-        w: 120,
+        x: 116,
+        w: 130,
         title: "VCO 2",
         sliders: &[
             Param::Vco2Coarse,
@@ -397,10 +436,22 @@ const SECTIONS: &[Section] = &[
             Param::Vco2Fm,
             Param::Vco2Level,
         ],
+        outs: &[
+            (out::VCO2_SAW, "SAW"),
+            (out::VCO2_PLS, "PLS"),
+            (out::VCO2_SIN, "SIN"),
+            (out::VCO2_TRI, "TRI"),
+        ],
+        ins: &[
+            (inp::VCO2_FM1, "FM1"),
+            (inp::VCO2_FM2, "FM2"),
+            (inp::VCO2_CV, "CV"),
+            (inp::VCO2_PWM, "PWM"),
+        ],
     },
     Section {
-        x: 264,
-        w: 120,
+        x: 254,
+        w: 130,
         title: "VCO 3",
         sliders: &[
             Param::Vco3Coarse,
@@ -409,21 +460,22 @@ const SECTIONS: &[Section] = &[
             Param::Vco3Fm,
             Param::Vco3Level,
         ],
-    },
-    Section {
-        x: 392,
-        w: 120,
-        title: "NOISE / MOD",
-        sliders: &[
-            Param::NoiseLevel,
-            Param::RingLevel,
-            Param::ShRate,
-            Param::LagTime,
+        outs: &[
+            (out::VCO3_SAW, "SAW"),
+            (out::VCO3_PLS, "PLS"),
+            (out::VCO3_SIN, "SIN"),
+            (out::VCO3_TRI, "TRI"),
+        ],
+        ins: &[
+            (inp::VCO3_FM1, "FM1"),
+            (inp::VCO3_FM2, "FM2"),
+            (inp::VCO3_CV, "CV"),
+            (inp::VCO3_PWM, "PWM"),
         ],
     },
     Section {
-        x: 520,
-        w: 120,
+        x: 392,
+        w: 110,
         title: "VCF",
         sliders: &[
             Param::VcfCutoff,
@@ -432,47 +484,118 @@ const SECTIONS: &[Section] = &[
             Param::VcfCv1,
             Param::VcfCv2,
         ],
+        outs: &[(out::VCF, "OUT")],
+        ins: &[
+            (inp::VCF_CV1, "CV1"),
+            (inp::VCF_CV2, "CV2"),
+            (inp::VCF_IN1, "IN1"),
+            (inp::VCF_IN2, "IN2"),
+        ],
     },
     Section {
-        x: 648,
-        w: 120,
+        x: 510,
+        w: 100,
         title: "VCA",
         sliders: &[Param::VcaGain, Param::VcaCv1, Param::VcaCv2],
+        outs: &[(out::VCA, "OUT")],
+        ins: &[
+            (inp::VCA_CV1, "CV1"),
+            (inp::VCA_CV2, "CV2"),
+            (inp::VCA_IN, "IN"),
+        ],
     },
     Section {
-        x: 776,
-        w: 120,
+        x: 618,
+        w: 100,
         title: "ADSR",
         sliders: &[Param::AdsrA, Param::AdsrD, Param::AdsrS, Param::AdsrR],
+        outs: &[(out::ADSR, "OUT")],
+        ins: &[],
     },
     Section {
-        x: 904,
-        w: 90,
+        x: 726,
+        w: 70,
         title: "AR",
         sliders: &[Param::ArA, Param::ArR],
+        outs: &[(out::AR, "OUT")],
+        ins: &[],
     },
     Section {
-        x: 1002,
-        w: 120,
+        x: 804,
+        w: 150,
+        title: "MODULATION",
+        sliders: &[
+            Param::NoiseLevel,
+            Param::RingLevel,
+            Param::ShRate,
+            Param::LagTime,
+        ],
+        outs: &[
+            (out::NOISE_W, "WHT"),
+            (out::NOISE_P, "PNK"),
+            (out::RING, "RNG"),
+            (out::SH, "S&H"),
+            (out::LAG, "LAG"),
+        ],
+        ins: &[
+            (inp::RING_IN1, "R-1"),
+            (inp::RING_IN2, "R-2"),
+            (inp::SH_IN, "SH-I"),
+            (inp::SH_CLK, "SH-C"),
+            (inp::LAG_IN, "LG-I"),
+        ],
+    },
+    Section {
+        x: 962,
+        w: 110,
         title: "MIXER",
         sliders: &[Param::Mix0, Param::Mix1, Param::Mix2, Param::Mix3],
+        outs: &[(out::MIXER, "OUT")],
+        ins: &[
+            (inp::MIX_IN1, "M1"),
+            (inp::MIX_IN2, "M2"),
+            (inp::MIX_IN3, "M3"),
+            (inp::MIX_IN4, "M4"),
+        ],
     },
     Section {
-        x: 1130,
-        w: 142,
-        title: "OUT",
-        sliders: &[Param::RevMix, Param::Glide],
+        x: 1080,
+        w: 100,
+        title: "OUTPUT",
+        sliders: &[Param::RevMix],
+        outs: &[(out::REVERB, "REV"), (out::VOICE, "VOI")],
+        ins: &[(inp::REV_IN1, "R-1"), (inp::REV_IN2, "R-2")],
+    },
+    Section {
+        x: 1188,
+        w: 84,
+        title: "KEYBOARD",
+        sliders: &[Param::Glide],
+        outs: &[(out::KB_CV, "CV"), (out::GATE, "GATE")],
+        ins: &[],
+    },
+    Section {
+        x: 1280,
+        w: 102,
+        title: "PREAMP",
+        sliders: &[Param::PreGain],
+        outs: &[(out::PRE, "PRE"), (out::ENV, "ENV")],
+        ins: &[(inp::PRE_IN, "IN")],
     },
 ];
 
 pub fn sliders() -> Vec<Slider> {
     let mut v = Vec::new();
     for s in SECTIONS {
+        // Center the slider group in the section.
+        let n = s.sliders.len() as i32;
+        let span = (n - 1) * 22 + 18;
+        let x0 = s.x + (s.w - span) / 2;
         for (i, p) in s.sliders.iter().enumerate() {
             v.push(Slider {
-                x: s.x + 10 + i as i32 * 22,
-                y: 76,
-                h: 130,
+                x: x0 + i as i32 * 22,
+                y: 82,
+                h: 150,
                 param: *p,
             });
         }
@@ -493,19 +616,50 @@ fn section_sliders(section_idx: usize) -> Vec<Slider> {
 pub fn slider_at(x: i32, y: i32) -> Option<usize> {
     sliders()
         .iter()
-        .position(|sl| x >= sl.x - 4 && x < sl.x + 18 && y >= sl.y - 4 && y < sl.y + sl.h + 20)
+        .position(|sl| x >= sl.x - 2 && x < sl.x + 20 && y >= sl.y - 4 && y < sl.y + sl.h + 20)
 }
 
-pub fn out_jack_pos(i: usize) -> (i32, i32) {
-    let col = (i / 8) as i32;
-    let row = (i % 8) as i32;
-    (16 + col * 200, 292 + row * 24)
+pub const JACK_Y: i32 = 256;
+pub const JACK_ROW_H: i32 = 22;
+
+fn section_of_out(id: usize) -> usize {
+    SECTIONS
+        .iter()
+        .position(|s| s.outs.iter().any(|(o, _)| *o == id))
+        .unwrap_or(0)
 }
 
-pub fn in_jack_pos(i: usize) -> (i32, i32) {
-    let col = (i / 10) as i32;
-    let row = (i % 10) as i32;
-    (664 + col * 200, 292 + row * 24)
+fn section_of_in(id: usize) -> usize {
+    SECTIONS
+        .iter()
+        .position(|s| s.ins.iter().any(|(i, _)| *i == id))
+        .unwrap_or(0)
+}
+
+fn out_col_x(s: &Section) -> i32 {
+    s.x + 8
+}
+
+fn in_col_x(s: &Section) -> i32 {
+    if s.outs.is_empty() {
+        s.x + 8
+    } else {
+        // Ins sit in a second column; keep at least 50px pitch so
+        // short labels never collide with the out column.
+        s.x + 8 + ((s.w - 16) / 2).max(50)
+    }
+}
+
+pub fn out_jack_pos(id: usize) -> (i32, i32) {
+    let s = &SECTIONS[section_of_out(id)];
+    let row = s.outs.iter().position(|(o, _)| *o == id).unwrap_or(0) as i32;
+    (out_col_x(s), JACK_Y + row * JACK_ROW_H)
+}
+
+pub fn in_jack_pos(id: usize) -> (i32, i32) {
+    let s = &SECTIONS[section_of_in(id)];
+    let row = s.ins.iter().position(|(i, _)| *i == id).unwrap_or(0) as i32;
+    (in_col_x(s), JACK_Y + row * JACK_ROW_H)
 }
 
 pub fn out_jack_at(x: i32, y: i32) -> Option<usize> {
@@ -528,6 +682,16 @@ pub fn in_jack_at(x: i32, y: i32) -> Option<usize> {
     None
 }
 
+pub fn jack_at(x: i32, y: i32) -> Option<JackRef> {
+    if let Some(o) = out_jack_at(x, y) {
+        return Some(JackRef::Out(o));
+    }
+    if let Some(i) = in_jack_at(x, y) {
+        return Some(JackRef::In(i));
+    }
+    None
+}
+
 // Keyboard: 2 octaves C3..B4. White-key midis in order.
 const WHITE_MIDIS: [u8; 14] = [48, 50, 52, 53, 55, 57, 59, 60, 62, 64, 65, 67, 69, 71];
 // (white index after which the black key sits, midi)
@@ -544,24 +708,26 @@ const BLACK_KEYS: [(usize, u8); 10] = [
     (12, 70),
 ];
 
-pub const KEY_TOP: i32 = 540;
-pub const KEY_H: i32 = 130;
+pub const KEY_TOP: i32 = 400;
+pub const KEY_H: i32 = 160;
 pub const WHITE_W: i32 = 90;
+/// Keyboard row is centered in the panel width.
+pub const KEY_X0: i32 = (W as i32 - 14 * WHITE_W) / 2;
 
 pub fn key_at(x: i32, y: i32) -> Option<u8> {
-    if y < KEY_TOP || y >= KEY_TOP + KEY_H || x < 16 || x >= 16 + 14 * WHITE_W {
+    if y < KEY_TOP || y >= KEY_TOP + KEY_H || x < KEY_X0 || x >= KEY_X0 + 14 * WHITE_W {
         return None;
     }
     // Black keys first (they sit on top).
-    if y < KEY_TOP + 80 {
+    if y < KEY_TOP + 96 {
         for (wi, midi) in BLACK_KEYS {
-            let cx = 16 + (wi as i32 + 1) * WHITE_W;
+            let cx = KEY_X0 + (wi as i32 + 1) * WHITE_W;
             if (x - cx).abs() <= 28 {
                 return Some(midi);
             }
         }
     }
-    let wi = ((x - 16) / WHITE_W) as usize;
+    let wi = ((x - KEY_X0) / WHITE_W) as usize;
     WHITE_MIDIS.get(wi).copied()
 }
 
@@ -582,6 +748,41 @@ fn fill_rect<T: sdl2::render::RenderTarget>(
 ) {
     canvas.set_draw_color(c);
     let _ = canvas.fill_rect(Rect::new(x, y, w, h));
+}
+
+fn draw_cable<T: sdl2::render::RenderTarget>(
+    canvas: &mut Canvas<T>,
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+    c: Color,
+) {
+    // draw_line is a no-op on this SDL build's surface canvas
+    // (verified: even a full diagonal test line produced zero pixels),
+    // so rasterize cords as 2px blocks with Bresenham.
+    let dx = (x1 - x0).abs();
+    let dy = -(y1 - y0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+    let sy = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx + dy;
+    let (mut x, mut y) = (x0, y0);
+    canvas.set_draw_color(c);
+    loop {
+        let _ = canvas.fill_rect(Rect::new(x - 1, y - 1, 2, 2));
+        if x == x1 && y == y1 {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 >= dy {
+            err += dy;
+            x += sx;
+        }
+        if e2 <= dx {
+            err += dx;
+            y += sy;
+        }
+    }
 }
 
 fn draw_switch_row<T: sdl2::render::RenderTarget>(
@@ -622,12 +823,23 @@ pub fn draw<T: sdl2::render::RenderTarget>(
     draw_text(canvas, 16, 8, "ARP 2600", 2, INK);
     draw_text(canvas, 16 + text_width("ARP 2600", 2) + 12, 14, "INSPIRED VARIANT", 1, DIM);
     let slot_text = format!("PRESET {}", ui.preset_slot);
-    draw_text(canvas, 1280 - 16 - text_width(&slot_text, 1), 14, &slot_text, 1, DIM);
+    draw_text(canvas, W as i32 - 16 - text_width(&slot_text, 1), 14, &slot_text, 1, DIM);
 
-    // Sections.
+    // Sections: framed module boxes, like the hardware panel.
     for (si, s) in SECTIONS.iter().enumerate() {
-        fill_rect(canvas, s.x, 32, s.w as u32, 208, SECTION);
-        draw_text(canvas, s.x + 8, 38, s.title, 1, INK);
+        fill_rect(canvas, s.x, 32, s.w as u32, 348, SECTION);
+        // Border.
+        canvas.set_draw_color(RULE);
+        let _ = canvas.draw_rect(Rect::new(s.x, 32, s.w as u32, 348));
+        draw_text(canvas, s.x + 8, 40, s.title, 1, INK);
+        fill_rect(
+            canvas,
+            s.x + 8,
+            51,
+            text_width(s.title, 1) as u32,
+            1,
+            INK,
+        );
         // Switch rows for VCO wave + noise type.
         match si {
             0 => {
@@ -635,7 +847,7 @@ pub fn draw<T: sdl2::render::RenderTarget>(
                     ("SAW", p.vco1_wave == Wave::Saw, Button::VcoWave(0, Wave::Saw)),
                     ("SQR", p.vco1_wave == Wave::Square, Button::VcoWave(0, Wave::Square)),
                 ];
-                draw_switch_row(canvas, s.x + 8, 54, &opts, buttons_out);
+                draw_switch_row(canvas, s.x + (s.w - 54) / 2, 58, &opts, buttons_out);
             }
             1 => {
                 let opts: [(&str, bool, Button); 4] = [
@@ -644,7 +856,7 @@ pub fn draw<T: sdl2::render::RenderTarget>(
                     ("SIN", p.vco2_wave == Wave::Sine, Button::VcoWave(1, Wave::Sine)),
                     ("TRI", p.vco2_wave == Wave::Triangle, Button::VcoWave(1, Wave::Triangle)),
                 ];
-                draw_switch_row(canvas, s.x + 8, 54, &opts, buttons_out);
+                draw_switch_row(canvas, s.x + (s.w - 110) / 2, 58, &opts, buttons_out);
             }
             2 => {
                 let opts: [(&str, bool, Button); 4] = [
@@ -653,9 +865,9 @@ pub fn draw<T: sdl2::render::RenderTarget>(
                     ("SIN", p.vco3_wave == Wave::Sine, Button::VcoWave(2, Wave::Sine)),
                     ("TRI", p.vco3_wave == Wave::Triangle, Button::VcoWave(2, Wave::Triangle)),
                 ];
-                draw_switch_row(canvas, s.x + 8, 54, &opts, buttons_out);
+                draw_switch_row(canvas, s.x + (s.w - 110) / 2, 58, &opts, buttons_out);
             }
-            3 => {
+            7 => {
                 let opts: [(&str, bool, Button); 2] = [
                     (
                         "WHT",
@@ -668,88 +880,125 @@ pub fn draw<T: sdl2::render::RenderTarget>(
                         Button::NoiseType(NoiseType::Pink),
                     ),
                 ];
-                draw_switch_row(canvas, s.x + 8, 54, &opts, buttons_out);
+                draw_switch_row(canvas, s.x + (s.w - 54) / 2, 58, &opts, buttons_out);
             }
             _ => {}
         }
         for sl in section_sliders(si) {
-            let v = sl.param.to01(p);
-            let fill_h = (v * sl.h as f32) as i32;
-            fill_rect(canvas, sl.x, sl.y, 14, sl.h as u32, TRACK);
-            if fill_h > 0 {
-                fill_rect(
-                    canvas,
-                    sl.x,
-                    sl.y + sl.h - fill_h,
-                    14,
-                    fill_h as u32,
-                    ACCENT,
-                );
+            // Hardware slider: thin track, tick marks, rectangular cap.
+            let cx = sl.x + 9;
+            fill_rect(canvas, cx - 1, sl.y, 2, sl.h as u32, TRACK);
+            for t in 0..5 {
+                let ty = sl.y + sl.h - t * sl.h / 4;
+                fill_rect(canvas, cx - 5, ty - 1, 10, 2, DIM);
             }
-            // Handle line.
-            let hy = sl.y + sl.h - fill_h;
-            fill_rect(canvas, sl.x - 2, hy - 1, 18, 3, INK);
-            draw_text(canvas, sl.x - 2, sl.y + sl.h + 6, sl.param.label(), 1, DIM);
+            let v = sl.param.to01(p);
+            let cy = sl.y + sl.h - (v * sl.h as f32) as i32 - 5;
+            fill_rect(canvas, sl.x, cy, 18, 10, CAP);
+            fill_rect(canvas, sl.x, cy + 4, 18, 2, TRACK);
+            draw_text(
+                canvas,
+                sl.x + 9 - text_width(sl.param.label(), 1) / 2,
+                sl.y + sl.h + 6,
+                sl.param.label(),
+                1,
+                DIM,
+            );
         }
     }
 
-    // Patch bay title + hint.
-    draw_text(canvas, 16, 252, "PATCH BAY", 1, INK);
-    draw_text(
-        canvas,
-        16 + text_width("PATCH BAY", 1) + 12,
-        252,
-        "CLICK AN OUT JACK, THEN AN IN JACK. CLICK A PATCHED IN JACK TO UNPLUG.",
-        1,
-        DIM,
-    );
-    // Cables.
+    // Patch cords drape over the panel like real cords, colored by
+    // their source module so a cord's origin reads at a glance.
     for i in 0..inp::COUNT {
         if let Some(o) = synth.patch.cable_for(i) {
             let (ox, oy) = out_jack_pos(o);
             let (ix, iy) = in_jack_pos(i);
-            canvas.set_draw_color(CABLE_COLORS[o % 6]);
-            let _ = canvas.draw_line(
-                sdl2::rect::Point::new(ox, oy),
-                sdl2::rect::Point::new(ix, iy),
+            draw_cable(
+                canvas,
+                ox,
+                oy,
+                ix,
+                iy,
+                SECTION_CABLE[section_of_out(o)],
             );
         }
     }
-    // Jacks.
-    for i in 0..out::COUNT {
-        let (jx, jy) = out_jack_pos(i);
-        let pending = ui.pending_out == Some(i);
-        let c = if pending { ACCENT } else { INK };
-        fill_rect(canvas, jx - 6, jy - 6, 12, 12, c);
-        fill_rect(canvas, jx - 3, jy - 3, 6, 6, SECTION);
-        draw_text(canvas, jx + 10, jy - 3, OUT_LABELS[i], 1, DIM);
+    // Jacks live inside their module sections, like the hardware.
+    for s in SECTIONS {
+        for (o, label) in s.outs {
+            let (jx, jy) = out_jack_pos(*o);
+            let ring = if ui.pending_out == Some(*o) {
+                ACCENT
+            } else {
+                JACK_RING
+            };
+            fill_rect(canvas, jx - 6, jy - 6, 12, 12, ring);
+            fill_rect(canvas, jx - 3, jy - 3, 6, 6, JACK_HOLE);
+            draw_text(canvas, jx + 10, jy - 3, label, 1, DIM);
+        }
+        for (i, label) in s.ins {
+            let (jx, jy) = in_jack_pos(*i);
+            let ring = if synth.patch.cable_for(*i).is_some() {
+                ACCENT
+            } else {
+                JACK_RING
+            };
+            fill_rect(canvas, jx - 6, jy - 6, 12, 12, ring);
+            fill_rect(canvas, jx - 3, jy - 3, 6, 6, JACK_HOLE);
+            draw_text(canvas, jx + 10, jy - 3, label, 1, DIM);
+        }
     }
-    for i in 0..inp::COUNT {
-        let (jx, jy) = in_jack_pos(i);
-        let patched = synth.patch.cable_for(i).is_some();
-        let c = if patched { ACCENT } else { INK };
-        fill_rect(canvas, jx - 6, jy - 6, 12, 12, c);
-        fill_rect(canvas, jx - 3, jy - 3, 6, 6, SECTION);
-        draw_text(canvas, jx + 10, jy - 3, IN_LABELS[i], 1, DIM);
+    // Highlight the section being patched from, or hovered over.
+    let mut highlight: Vec<usize> = Vec::new();
+    if let Some(o) = ui.pending_out {
+        highlight.push(section_of_out(o));
+    }
+    if let Some(j) = ui.hover_jack {
+        let si = match j {
+            JackRef::Out(o) => section_of_out(o),
+            JackRef::In(i) => section_of_in(i),
+        };
+        if !highlight.contains(&si) {
+            highlight.push(si);
+        }
+    }
+    for si in highlight {
+        let s = &SECTIONS[si];
+        canvas.set_draw_color(ACCENT);
+        let _ = canvas.draw_rect(Rect::new(s.x, 32, s.w as u32, 348));
     }
 
     // Keyboard.
     for (i, m) in WHITE_MIDIS.iter().enumerate() {
-        let x = 16 + i as i32 * WHITE_W;
+        let x = KEY_X0 + i as i32 * WHITE_W;
         let held = ui.held_keys.contains(m) || synth.gate() && (synth.current_midi() as u8) == *m;
         let c = if held { HELD_KEY } else { WHITE_KEY };
         fill_rect(canvas, x + 1, KEY_TOP, (WHITE_W - 2) as u32, KEY_H as u32, c);
-        draw_text(canvas, x + 6, KEY_TOP + KEY_H - 16, &midi_name(*m), 1, DIM);
+        draw_text(canvas, x + 6, KEY_TOP + KEY_H - 16, &midi_name(*m), 1, TRACK);
     }
     for (wi, m) in BLACK_KEYS {
-        let cx = 16 + (wi as i32 + 1) * WHITE_W;
+        let cx = KEY_X0 + (wi as i32 + 1) * WHITE_W;
         let held = ui.held_keys.contains(&m);
         let c = if held { HELD_KEY } else { BLACK_KEY };
-        fill_rect(canvas, cx - 28, KEY_TOP, 56, 80, c);
+        fill_rect(canvas, cx - 28, KEY_TOP, 56, 96, c);
     }
 
     // Footer.
     let mut status = String::new();
+    if let Some(o) = ui.pending_out {
+        let si = section_of_out(o);
+        status.push_str(&format!(
+            "PATCHING FROM {} {} - CLICK AN IN JACK   ",
+            SECTIONS[si].title, OUT_LABELS[o]
+        ));
+    }
+    if let Some(j) = ui.hover_jack {
+        let (si, full, dir) = match j {
+            JackRef::Out(o) => (section_of_out(o), OUT_LABELS[o], "OUT"),
+            JackRef::In(i) => (section_of_in(i), IN_LABELS[i], "IN"),
+        };
+        status.push_str(&format!("{} {} {}   ", SECTIONS[si].title, full, dir));
+    }
     if let Some(param) = ui.hover_param {
         status.push_str(&format!("{}  {}   ", param.name(), param.display(p)));
     }
@@ -764,12 +1013,12 @@ pub fn draw<T: sdl2::render::RenderTarget>(
     if synth.gate() {
         status.push_str(&format!("NOTE {}", midi_name(synth.current_midi() as u8)));
     }
-    draw_text(canvas, 16, 684, &status, 1, INK);
+    draw_text(canvas, 16, 580, &status, 1, INK);
     draw_text(
         canvas,
         16,
-        706,
-        "1-8 LOAD PRESET / SHIFT+1-8 SAVE  |  A-ROW + Z-ROW PLAY, ARROWS SHIFT OCTAVE  |  SPACE PANIC  |  ESC QUIT",
+        604,
+        "PATCH: CLICK AN OUT JACK, THEN AN IN JACK (JACKS SIT WITH THEIR MODULES)  |  1-8 LOAD / SHIFT+1-8 SAVE  |  SPACE PANIC  |  ESC QUIT",
         1,
         DIM,
     );
@@ -781,11 +1030,23 @@ mod tests {
 
     #[test]
     fn key_hit_testing() {
-        assert_eq!(key_at(16 + 45, 600), Some(48)); // C3 white
-        assert_eq!(key_at(16 + 90 + 45, 600), Some(50)); // D3 white
-        assert_eq!(key_at(16 + 90, 580), Some(49)); // C#3 black
-        assert_eq!(key_at(16, 400), None); // above keyboard
-        assert_eq!(key_at(2000, 600), None); // off the right edge
+        assert_eq!(key_at(KEY_X0 + 45, 460), Some(48)); // C3 white
+        assert_eq!(key_at(KEY_X0 + 90 + 45, 460), Some(50)); // D3 white
+        assert_eq!(key_at(KEY_X0 + 90, 430), Some(49)); // C#3 black
+        assert_eq!(key_at(KEY_X0, 380), None); // above keyboard
+        assert_eq!(key_at(2000, 460), None); // off the right edge
+    }
+
+    #[test]
+    fn preamp_jacks_live_in_their_section() {
+        let (x, y) = out_jack_pos(out::ENV);
+        let s = &SECTIONS[11];
+        assert_eq!(s.title, "PREAMP");
+        assert!(x > s.x && x < s.x + s.w);
+        assert_eq!(out_jack_at(x, y), Some(out::ENV));
+        let (x, y) = in_jack_pos(inp::PRE_IN);
+        assert!(x > s.x && x < s.x + s.w);
+        assert_eq!(in_jack_at(x, y), Some(inp::PRE_IN));
     }
 
     #[test]
@@ -794,13 +1055,18 @@ mod tests {
         assert_eq!(out_jack_at(x, y), Some(0));
         let (x, y) = in_jack_pos(28);
         assert_eq!(in_jack_at(x, y), Some(28));
-        assert_eq!(out_jack_at(640, 400), None);
+        // Jacks now live in their modules: VCO1 SAW sits in the VCO1
+        // section, and the MODULATION section holds the ring inputs.
+        let (mx, my) = out_jack_pos(out::VCO2_PLS);
+        assert!(mx > SECTIONS[1].x && mx < SECTIONS[1].x + SECTIONS[1].w);
+        let _ = my;
+        assert_eq!(out_jack_at(640, 600), None);
     }
 
     #[test]
     fn slider_hit_testing() {
         let sl = sliders()[0];
-        assert_eq!(slider_at(sl.x + 7, sl.y + 65), Some(0));
-        assert_eq!(slider_at(640, 400), None);
+        assert_eq!(slider_at(sl.x + 9, sl.y + 75), Some(0));
+        assert_eq!(slider_at(640, 600), None);
     }
 }

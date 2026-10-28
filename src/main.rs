@@ -442,6 +442,7 @@ fn run_ui() -> i32 {
                     } else {
                         ui_state.hover_param = None;
                     }
+                    ui_state.hover_jack = ui::jack_at(x, y);
                 }
                 Event::MouseButtonUp { .. } => {
                     ui_state.drag_slider = None;

@@ -5,7 +5,7 @@
 //! path is the classic subtractive voice: keyboard CV -> VCOs ->
 //! voice bus -> VCF -> VCA, ADSR -> VCA CV, AR -> VCF CV.
 
-use crate::dsp::{ring, Lag, PinkNoise, SampleHold, WhiteNoise};
+use crate::dsp::{ring, EnvFollower, Lag, PinkNoise, SampleHold, WhiteNoise};
 use crate::env::{Adsr, Ar};
 use crate::filter::Ladder;
 use crate::osc::{Vco, Wave};
@@ -59,6 +59,7 @@ pub struct Params {
     pub ar_r: f32,
     pub mix_levels: [f32; 4],
     pub rev_mix: f32,
+    pub pre_gain: f32,
 }
 
 impl Default for Params {
@@ -103,6 +104,7 @@ impl Default for Params {
             ar_r: 0.3,
             mix_levels: [0.8, 0.8, 0.8, 0.8],
             rev_mix: 0.25,
+            pre_gain: 1.0,
         }
     }
 }
@@ -122,6 +124,7 @@ pub struct Synth {
     sh: SampleHold,
     lag: Lag,
     glide_lag: Lag,
+    follower: EnvFollower,
     reverb: SpringReverb,
     // Note state.
     note_midi: f32,
@@ -151,6 +154,7 @@ impl Synth {
             sh: SampleHold::new(),
             lag: Lag::new(),
             glide_lag: Lag::new(),
+            follower: EnvFollower::new(sr),
             reverb: SpringReverb::new(sr),
             note_midi: 60.0,
             gate: false,
@@ -210,6 +214,12 @@ impl Synth {
 
     pub fn current_midi(&self) -> f32 {
         self.note_midi
+    }
+
+    /// Last published value of an output jack (tests only).
+    #[cfg(test)]
+    pub fn jack(&self, o: usize) -> f32 {
+        self.outs_cur[o]
     }
 
     fn src(&self, input: usize) -> f32 {
@@ -383,6 +393,11 @@ impl Synth {
         let rev_in = self.src(inp::REV_IN1) + self.src(inp::REV_IN2);
         let (rev_l, rev_r) = self.reverb.next(rev_in);
 
+        // Preamp + envelope follower (default input: VCA output, so
+        // with nothing patched the follower tracks playing dynamics).
+        let pre_out = self.src(inp::PRE_IN) * p.pre_gain;
+        let env_out = self.follower.next(pre_out);
+
         // Publish all jack values for the next sample.
         let mut cur = [0.0f32; out::COUNT];
         cur[out::VCO1_SAW] = v1_saw;
@@ -409,6 +424,8 @@ impl Synth {
         cur[out::MIXER] = mixer;
         cur[out::REVERB] = (rev_l + rev_r) * 0.5;
         cur[out::VOICE] = voice;
+        cur[out::PRE] = pre_out;
+        cur[out::ENV] = env_out;
         self.outs_last = self.outs_cur;
         self.outs_cur = cur;
 
@@ -472,6 +489,28 @@ mod tests {
         s.render(&mut buf);
         let peak = buf.iter().fold(0.0f32, |m, x| m.max(x.abs()));
         assert!(peak < 0.01, "peak={peak}");
+    }
+
+    #[test]
+    fn envelope_follower_tracks_playing() {
+        let mut s = Synth::new(44100.0);
+        s.note_on(69.0);
+        let mut buf = vec![0.0; 44100 * 2];
+        s.render(&mut buf);
+        let env = s.jack(out::ENV);
+        assert!(env > 0.05, "env={env} while a note plays");
+        s.note_off(69.0);
+        let mut buf2 = vec![0.0; 44100 * 2];
+        s.render(&mut buf2);
+        let env = s.jack(out::ENV);
+        assert!(env < 0.01, "env={env} after a second of silence");
+        // Zero gain starves the follower even while a note plays.
+        let mut s = Synth::new(44100.0);
+        s.params.pre_gain = 0.0;
+        s.note_on(69.0);
+        let mut buf3 = vec![0.0; 44100 * 2];
+        s.render(&mut buf3);
+        assert!(s.jack(out::ENV) < 0.01, "env={}", s.jack(out::ENV));
     }
 
     #[test]

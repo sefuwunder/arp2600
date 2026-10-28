@@ -3,7 +3,9 @@
 An ARP 2600-inspired semi-modular synthesizer in Rust + SDL2: three
 VCOs, a 4-pole ladder filter, ADSR + AR transient generators, a ring
 modulator, white/pink noise, sample & hold, a lag processor, a utility
-mixer, a spring-style reverb, and a patch bay with normalized routing.
+mixer, a spring-style reverb, a preamp with envelope follower, and
+patch points that live inside their own module sections, with
+normalized routing (26 outputs, 30 inputs).
 All continuous params are vertical sliders, the 2600's own idiom.
 
 This is an inspired variant, not a circuit clone: the module set and
@@ -39,12 +41,17 @@ Keyboard CV -> all three VCOs; the voice bus (VCO levels + noise +
 ring) -> VCF input; VCF -> VCA input; ADSR -> VCA CV; AR -> VCF CV.
 Play the on-screen keyboard, the computer keys, or a MIDI keyboard.
 
-## Patch bay
+## Patching
 
-Click an OUT jack, then an IN jack to patch; click a patched IN jack
-to unplug. Patching an input breaks its normalized connection. One
-cable per input. Every patch read uses the previous sample's jack
-value, so feedback patches (VCF out -> VCF CV, and so on) are stable
+Like the hardware, every jack lives inside its own module section:
+outs in the left column, ins in the right, with short labels (the
+section already says which module they belong to). Click an OUT jack,
+then an IN jack to patch; click a patched IN jack to unplug. Patching
+an input breaks its normalized connection. One cable per input. Cords
+are colored by their source module, the section being patched from
+highlights, and the footer names the jack under the mouse in full.
+Every patch read uses the previous sample's jack value, so feedback
+patches (VCF out -> VCF CV, and so on) are stable
 with a single sample of latency.
 
 Normalized connections:
@@ -83,6 +90,17 @@ of adding to it.
 
 ## v1 omissions (future work)
 
-No sequencer, no preamp/envelope follower (no audio input yet), no
-electronic switch, monophonic only (last-note priority, retrigger).
-The patch bay, engine, and preset format are built to take them.
+No sequencer, no electronic switch, monophonic only (last-note
+priority, retrigger). The patch bay, engine, and preset format are
+built to take them.
+
+## Envelope follower
+
+The PREAMP section follows the hardware: PRE IN takes a signal, GAIN
+amplifies it (PRE OUT), and ENV OUT is a control voltage tracking the
+signal's amplitude (fast attack, slow release, so it follows notes
+without audio-rate ripple). There is no external audio input, so PRE
+IN is normalized to the VCA output: with nothing patched, ENV OUT
+tracks your playing dynamics. Patch ENV OUT to VCF CV2 for a filter
+that opens with how hard you play, or patch any other source into PRE
+IN to follow that instead.

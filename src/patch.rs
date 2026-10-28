@@ -29,7 +29,9 @@ pub mod out {
     pub const MIXER: usize = 21;
     pub const REVERB: usize = 22;
     pub const VOICE: usize = 23;
-    pub const COUNT: usize = 24;
+    pub const PRE: usize = 24;
+    pub const ENV: usize = 25;
+    pub const COUNT: usize = 26;
 }
 
 pub mod inp {
@@ -62,20 +64,21 @@ pub mod inp {
     pub const MIX_IN4: usize = 26;
     pub const REV_IN1: usize = 27;
     pub const REV_IN2: usize = 28;
-    pub const COUNT: usize = 29;
+    pub const PRE_IN: usize = 29;
+    pub const COUNT: usize = 30;
 }
 
 pub const OUT_LABELS: [&str; out::COUNT] = [
     "V1 SAW", "V1 SQR", "V2 SAW", "V2 PLS", "V2 SIN", "V2 TRI", "V3 SAW", "V3 PLS",
     "V3 SIN", "V3 TRI", "NOISE W", "NOISE P", "RING", "S&H", "VCF", "VCA", "ADSR",
-    "AR", "KB CV", "GATE", "LAG", "MIXER", "REVERB", "VOICE",
+    "AR", "KB CV", "GATE", "LAG", "MIXER", "REVERB", "VOICE", "PRE", "ENV",
 ];
 
 pub const IN_LABELS: [&str; inp::COUNT] = [
     "V1 FM1", "V1 FM2", "V1 CV", "V2 FM1", "V2 FM2", "V2 CV", "V2 PWM", "V3 FM1",
     "V3 FM2", "V3 CV", "V3 PWM", "VCF CV1", "VCF CV2", "VCF IN1", "VCF IN2",
     "VCA CV1", "VCA CV2", "VCA IN", "RING 1", "RING 2", "S&H IN", "S&H CLK",
-    "LAG IN", "MIX 1", "MIX 2", "MIX 3", "MIX 4", "REV 1", "REV 2",
+    "LAG IN", "MIX 1", "MIX 2", "MIX 3", "MIX 4", "REV 1", "REV 2", "PRE IN",
 ];
 
 /// Normalized connections: (input, default output).
@@ -96,6 +99,7 @@ pub const NORMALIZED: &[(usize, usize)] = &[
     (inp::MIX_IN3, out::VCO3_SAW),
     (inp::MIX_IN4, out::NOISE_W),
     (inp::REV_IN1, out::VCA),
+    (inp::PRE_IN, out::VCA),
 ];
 
 #[derive(Clone, Default)]
@@ -153,6 +157,12 @@ mod tests {
         assert_eq!(p.source_for(inp::VCF_IN1), Some(out::VCO1_SAW));
         p.disconnect(inp::VCF_IN1);
         assert_eq!(p.source_for(inp::VCF_IN1), Some(out::VOICE));
+    }
+
+    #[test]
+    fn preamp_input_normalizes_to_vca() {
+        let p = Patch::new();
+        assert_eq!(p.source_for(inp::PRE_IN), Some(out::VCA));
     }
 
     #[test]

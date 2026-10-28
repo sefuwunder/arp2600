@@ -96,6 +96,7 @@ pub fn params_to_map(p: &Params) -> Vec<(String, String)> {
         ("mix2".into(), f(p.mix_levels[2])),
         ("mix3".into(), f(p.mix_levels[3])),
         ("rev_mix".into(), f(p.rev_mix)),
+        ("pre_gain".into(), f(p.pre_gain)),
     ]
 }
 
@@ -154,6 +155,7 @@ pub fn apply_map(p: &mut Params, map: &HashMap<String, String>) {
     set!(ar_a, "ar_a");
     set!(ar_r, "ar_r");
     set!(rev_mix, "rev_mix");
+    set!(pre_gain, "pre_gain");
     for (i, k) in ["mix0", "mix1", "mix2", "mix3"].iter().enumerate() {
         if let Some(v) = g(k) {
             p.mix_levels[i] = v;

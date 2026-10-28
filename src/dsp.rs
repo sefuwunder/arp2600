@@ -113,6 +113,38 @@ impl Lag {
     }
 }
 
+/// Envelope follower (the 2600 preamp's follower output): rectifies
+/// the input and smooths it with a fast attack and a slower release,
+/// so the output tracks amplitude without audio-rate ripple.
+#[derive(Clone, Copy)]
+pub struct EnvFollower {
+    pub level: f32,
+    attack: f32,
+    release: f32,
+}
+
+impl EnvFollower {
+    pub fn new(sr: f32) -> Self {
+        let coeff = |t: f32| 1.0 - (-1.0 / (t * sr)).exp();
+        Self {
+            level: 0.0,
+            attack: coeff(0.002),
+            release: coeff(0.15),
+        }
+    }
+
+    pub fn next(&mut self, input: f32) -> f32 {
+        let v = input.abs();
+        let g = if v > self.level {
+            self.attack
+        } else {
+            self.release
+        };
+        self.level += g * (v - self.level);
+        self.level
+    }
+}
+
 /// Balanced (ring) modulator: product of two inputs.
 pub fn ring(a: f32, b: f32) -> f32 {
     a * b
@@ -143,5 +175,24 @@ mod tests {
         assert_eq!(v, 0.7);
         let v = sh.next(-0.3, 0.0, false, true, 44100.0);
         assert_eq!(v, 0.7);
+    }
+
+    #[test]
+    fn follower_tracks_and_releases() {
+        let mut f = EnvFollower::new(44100.0);
+        for _ in 0..1000 {
+            f.next(0.8);
+        }
+        assert!(f.level > 0.7, "level={}", f.level);
+        // After the input stops, the slow release keeps it up briefly…
+        for _ in 0..1000 {
+            f.next(0.0);
+        }
+        assert!(f.level > 0.3, "level={}", f.level);
+        // …then lets go.
+        for _ in 0..44100 {
+            f.next(0.0);
+        }
+        assert!(f.level < 0.01, "level={}", f.level);
     }
 }
